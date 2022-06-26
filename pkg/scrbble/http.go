@@ -62,10 +62,7 @@ func (h *HttpHandlers) Connect() http.HandlerFunc {
 		}
 
 		respChan := make(chan *Room)
-		h.roomManager.SendGetRequest(GetRoomRequest{
-			RoomID:   queryValue.Get("rk"),
-			Response: respChan,
-		})
+		h.roomManager.SendGetRequest(queryValue.Get("rk"), respChan)
 		var room *Room
 		select {
 		case room = <-respChan:
@@ -84,6 +81,8 @@ func (h *HttpHandlers) Connect() http.HandlerFunc {
 		}
 
 		newPlayer := CreatePlayer(conn, room)
+
+		h.roomManager.SendAddPlayerRequest(room.RoomID, newPlayer)
 
 		syncRespChan := make(chan PebbleSyncResponse)
 		room.PhysicsManager.sync <- PebbleSyncRequest{ResponseChan: syncRespChan}

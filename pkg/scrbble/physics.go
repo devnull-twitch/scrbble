@@ -114,6 +114,10 @@ func CreatePhysicsManager() *PhysicsManager {
 }
 
 func (phym *PhysicsManager) Start() {
+	defer func() {
+		logrus.Info("physics loop ended")
+	}()
+
 	ticker := time.NewTicker(time.Second / 30)
 	pebbleCreateTicker := time.NewTicker(time.Millisecond * 250)
 	for {

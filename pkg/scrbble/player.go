@@ -49,6 +49,8 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 		Room:       room,
 	}
 
+	conn.SetCloseHandler(newPlayer.CloseHandler)
+
 	physicsMessages := make(chan PhysicsMessage)
 	phym := room.PhysicsManager
 	phym.addPlayer <- playerPhysicsCreateRequest{
@@ -60,8 +62,6 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 			{X: 300, Y: 300},
 		},
 	}
-
-	conn.SetCloseHandler(newPlayer.CloseHandler)
 
 	go func() {
 		roomLog := logrus.WithField("room", room.RoomID).WithField("player_id", newPlayer.ID)
@@ -162,20 +162,9 @@ func (p *Player) CloseHandler(code int, text string) error {
 		return fmt.Errorf("player closed without room")
 	}
 
-	filteredPlayers := make([]*Player, 0, len(p.Room.Players))
-	for _, other := range p.Room.Players {
-		if other.Conn != p.Conn {
-			filteredPlayers = append(filteredPlayers, p)
-			other.ServerMsgs <- serverMessage{
-				Type:     "disconnect",
-				PlayerID: p.ID,
-			}
-		} else {
-			p.Room.PhysicsManager.removePlayer <- p.ID
-		}
-	}
+	p.Room.RoomManager.SendRemovePlayerRequest(p.Room.RoomID, p.ID)
+	p.Room.PhysicsManager.removePlayer <- p.ID
 
-	p.Room.Players = filteredPlayers
 	logrus.WithField("player_id", p.ID).Info("removed from room")
 	return nil
 }
