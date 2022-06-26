@@ -2,6 +2,7 @@ package scrbble
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/gorilla/websocket"
 	"github.com/sirupsen/logrus"
@@ -9,15 +10,15 @@ import (
 )
 
 type Player struct {
-	Conn      *websocket.Conn
-	PlayerTag string
-
-	Points     int
-	Active     bool
-	Head       *resolv.Object
-	Parts      []*resolv.Object
-	ServerMsgs chan serverMessage
-	Room       *Room
+	Conn               *websocket.Conn
+	PlayerTag          string
+	PhysicsMessageChan chan PhysicsMessage
+	Points             int
+	Active             bool
+	Head               *resolv.Object
+	Parts              []*resolv.Object
+	ServerMsgs         chan serverMessage
+	Room               *Room
 }
 
 type serverMessage struct {
@@ -148,6 +149,14 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 }
 
 func (p *Player) CloseHandler(code int, text string) error {
+	select {
+	case p.Room.PhysicsManager.removePlayer <- p.PlayerTag:
+	case <-time.After(time.Second):
+		logrus.Fatal("Player removal from pysics module timed out")
+	}
+
+	p.Active = false
+
 	if p.Room == nil {
 		logrus.Fatal("player closed without room")
 		return fmt.Errorf("player closed without room")
