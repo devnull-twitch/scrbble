@@ -1,0 +1,23 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+  namespace: scrbble
+spec:
+  selector:
+    matchLabels:
+      component: backend
+  template:
+    metadata:
+      labels:
+        component: backend
+    spec:
+      containers:
+        - name: backend
+          image: ghcr.io/devnull-twitch/scrbble:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8090
+              protocol: TCP
+      imagePullSecrets:
+        - name: dockerconfigjson-ghcr
