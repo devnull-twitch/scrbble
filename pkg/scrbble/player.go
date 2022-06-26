@@ -11,7 +11,7 @@ import (
 
 type Player struct {
 	Conn               *websocket.Conn
-	PlayerTag          string
+	ID                 string
 	PhysicsMessageChan chan PhysicsMessage
 	Points             int
 	Active             bool
@@ -36,13 +36,13 @@ type clientMessage struct {
 var nextPlayerID int = 1
 
 func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
-	playerTag := fmt.Sprintf("player-%d", nextPlayerID)
+	id := fmt.Sprintf("player-%d", nextPlayerID)
 	nextPlayerID++
 
 	netOutMessages := make(chan serverMessage)
 	newPlayer := &Player{
 		Conn:       conn,
-		PlayerTag:  playerTag,
+		ID:         id,
 		Points:     0,
 		Active:     true,
 		ServerMsgs: netOutMessages,
@@ -52,7 +52,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 	physicsMessages := make(chan PhysicsMessage)
 	phym := room.PhysicsManager
 	phym.addPlayer <- playerPhysicsCreateRequest{
-		ID:         playerTag,
+		ID:         id,
 		ServerChan: physicsMessages,
 		HeadX:      300,
 		HeadY:      300,
@@ -64,7 +64,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 	conn.SetCloseHandler(newPlayer.CloseHandler)
 
 	go func() {
-		roomLog := logrus.WithField("room", room.RoomID).WithField("player_id", newPlayer.PlayerTag)
+		roomLog := logrus.WithField("room", room.RoomID).WithField("player_id", newPlayer.ID)
 		for newPlayer.Active {
 			select {
 			case physMsg := <-physicsMessages:
@@ -74,11 +74,11 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 					if newPlayer.Points%3 == 0 {
 						conn.WriteJSON(serverMessage{
 							Type:     "add_part",
-							PlayerID: newPlayer.PlayerTag,
+							PlayerID: newPlayer.ID,
 						})
 						roomLog.Info("send add part")
 						go func() {
-							phym.addPart <- playerPhysicsAddPartRequest{ID: newPlayer.PlayerTag}
+							phym.addPart <- playerPhysicsAddPartRequest{ID: newPlayer.ID}
 						}()
 					}
 
@@ -134,7 +134,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 			}
 
 			phym.updateRotation <- UpdatePlayerRotation{
-				ID: newPlayer.PlayerTag,
+				ID: newPlayer.ID,
 				T:  clientMsg.T,
 			}
 		}
@@ -142,7 +142,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 
 	newPlayer.ServerMsgs <- serverMessage{
 		Type:     "youare",
-		PlayerID: newPlayer.PlayerTag,
+		PlayerID: newPlayer.ID,
 	}
 
 	return newPlayer
@@ -150,7 +150,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 
 func (p *Player) CloseHandler(code int, text string) error {
 	select {
-	case p.Room.PhysicsManager.removePlayer <- p.PlayerTag:
+	case p.Room.PhysicsManager.removePlayer <- p.ID:
 	case <-time.After(time.Second):
 		logrus.Fatal("Player removal from pysics module timed out")
 	}
@@ -168,14 +168,14 @@ func (p *Player) CloseHandler(code int, text string) error {
 			filteredPlayers = append(filteredPlayers, p)
 			other.ServerMsgs <- serverMessage{
 				Type:     "disconnect",
-				PlayerID: p.PlayerTag,
+				PlayerID: p.ID,
 			}
 		} else {
-			p.Room.PhysicsManager.removePlayer <- p.PlayerTag
+			p.Room.PhysicsManager.removePlayer <- p.ID
 		}
 	}
 
 	p.Room.Players = filteredPlayers
-	logrus.WithField("player_id", p.PlayerTag).Info("removed from room")
+	logrus.WithField("player_id", p.ID).Info("removed from room")
 	return nil
 }

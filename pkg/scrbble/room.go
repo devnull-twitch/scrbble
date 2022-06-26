@@ -2,7 +2,9 @@ package scrbble
 
 import (
 	"fmt"
+	"time"
 
+	"github.com/sirupsen/logrus"
 	"github.com/solarlune/resolv"
 )
 
@@ -38,6 +40,7 @@ func CreateManager() *RoomManager {
 func (m *RoomManager) Start() {
 	roomStorage := make(map[string]*Room)
 
+	cleanupTicket := time.NewTicker(time.Second * 2)
 	for {
 		select {
 		case newRoom := <-m.addRoomChan:
@@ -54,6 +57,15 @@ func (m *RoomManager) Start() {
 			}
 
 			req.Response <- room
+
+		case <-cleanupTicket.C:
+			for roomID, r := range roomStorage {
+				if len(r.Players) <= 0 {
+					r.PhysicsManager.deleteSelf <- true
+					delete(roomStorage, roomID)
+					logrus.WithField("room_id", roomID).Info("Delete room")
+				}
+			}
 		}
 	}
 }
