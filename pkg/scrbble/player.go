@@ -45,6 +45,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 		Points:     0,
 		Active:     true,
 		ServerMsgs: netOutMessages,
+		Room:       room,
 	}
 
 	physicsMessages := make(chan PhysicsMessage)
@@ -148,6 +149,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 
 func (p *Player) CloseHandler(code int, text string) error {
 	if p.Room == nil {
+		logrus.Fatal("player closed without room")
 		return fmt.Errorf("player closed without room")
 	}
 
@@ -165,6 +167,6 @@ func (p *Player) CloseHandler(code int, text string) error {
 	}
 
 	p.Room.Players = filteredPlayers
-	fmt.Println("player removed from room")
+	logrus.WithField("player_id", p.PlayerTag).Info("removed from room")
 	return nil
 }
