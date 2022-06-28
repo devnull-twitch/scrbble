@@ -4,9 +4,11 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/sirupsen/logrus"
 )
 
 type HttpHandlers struct {
@@ -54,10 +56,26 @@ func (h *HttpHandlers) AddRoom() http.HandlerFunc {
 }
 
 func (h *HttpHandlers) Connect() http.HandlerFunc {
+	colorPattern, err := regexp.Compile(`^?([a-f\d]{6})$`)
+	if err != nil {
+		panic(err)
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
 		queryValue := r.URL.Query()
 		if !queryValue.Has("rk") {
 			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
+
+		color := queryValue.Get("color")
+		if color == "" {
+			color = "FFFFFF"
+		}
+
+		if !colorPattern.MatchString(color) {
+			logrus.WithField("color", color).Error("invalid color code given")
+			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
 
@@ -70,6 +88,7 @@ func (h *HttpHandlers) Connect() http.HandlerFunc {
 		}
 
 		if room == nil {
+			logrus.WithField("room_id", queryValue.Get("rk")).Error("room not found")
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -80,7 +99,7 @@ func (h *HttpHandlers) Connect() http.HandlerFunc {
 			return
 		}
 
-		newPlayer := CreatePlayer(conn, room)
+		newPlayer := CreatePlayer(conn, room, color)
 
 		h.roomManager.SendAddPlayerRequest(room.RoomID, newPlayer)
 

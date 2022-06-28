@@ -29,6 +29,7 @@ type PhysicsMessage struct {
 	X        float64
 	Y        float64
 	PlayerID string
+	T        float64
 }
 
 type playerPhysicsCreateRequest struct {
@@ -123,6 +124,7 @@ func (phym *PhysicsManager) Start() {
 	for {
 		select {
 		case <-phym.deleteSelf:
+			logrus.Info("physics deleteSelf received")
 			return
 
 		case req := <-phym.addPlayer:
@@ -184,7 +186,11 @@ func (phym *PhysicsManager) Start() {
 			for pebbleID, pebbleObj := range phym.pebbles {
 				respPebbles = append(respPebbles, PebbleSyncPosition{X: pebbleObj.X, Y: pebbleObj.Y, ID: pebbleID})
 			}
-			syncReq.ResponseChan <- PebbleSyncResponse{Pebbles: respPebbles}
+			select {
+			case syncReq.ResponseChan <- PebbleSyncResponse{Pebbles: respPebbles}:
+			case <-time.After(time.Millisecond * 100):
+				logrus.Warn("sync timeout from physics module")
+			}
 
 		case rotationReq := <-phym.updateRotation:
 			p, ok := phym.players[rotationReq.ID]
@@ -203,22 +209,29 @@ func (phym *PhysicsManager) Start() {
 			phym.pebbles[phym.nextPebbleID] = pebbleObj
 			phym.space.Add(pebbleObj)
 
-			for _, player := range phym.players {
-				player.outMessages <- PhysicsMessage{
+			for playerID, player := range phym.players {
+				select {
+				case player.outMessages <- PhysicsMessage{
 					Type: PhyMsgAddPebble,
 					X:    pebbleObj.X,
 					Y:    pebbleObj.Y,
 					ID:   phym.nextPebbleID,
+				}:
+				case <-time.After(time.Millisecond * 50):
+					logrus.WithField("player_id", playerID).Warn("physics pebble message timed out")
 				}
 			}
 			phym.nextPebbleID++
-
 		}
 	}
 }
 
 func (phym *PhysicsManager) tick() {
 	for _, p := range phym.players {
+		if !p.active {
+			continue
+		}
+
 		mx := 3 * math.Cos(p.t)
 		my := 3 * math.Sin(p.t)
 
@@ -243,12 +256,17 @@ func (phym *PhysicsManager) tick() {
 		p.head.Y = p.head.Y + my
 		p.head.Update()
 
-		for _, otherPlayer := range phym.players {
-			otherPlayer.outMessages <- PhysicsMessage{
+		for playerID, otherPlayer := range phym.players {
+			select {
+			case otherPlayer.outMessages <- PhysicsMessage{
 				Type:     PhyMsgPos,
 				X:        p.head.X,
 				Y:        p.head.Y,
 				PlayerID: p.id,
+				T:        p.t,
+			}:
+			case <-time.After(time.Millisecond * 50):
+				logrus.WithField("player_id", playerID).Warn("physics position update timed out")
 			}
 		}
 	}
@@ -278,12 +296,20 @@ func (phym *PhysicsManager) checkIntersections(
 
 				phym.space.Remove(colObj)
 
-				p.outMessages <- PhysicsMessage{
+				select {
+				case p.outMessages <- PhysicsMessage{
 					Type: PhyMsgAddPoint,
+				}:
+				case <-time.After(time.Millisecond * 50):
+					logrus.WithField("player_id", p.id).Warn("collision with pebble message timed out")
 				}
 			} else {
-				p.outMessages <- PhysicsMessage{
+				select {
+				case p.outMessages <- PhysicsMessage{
 					Type: PhyMsgGameOver,
+				}:
+				case <-time.After(time.Millisecond * 50):
+					logrus.WithField("player_id", p.id).Warn("collision message timed out")
 				}
 				p.active = false
 				return false

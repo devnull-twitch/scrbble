@@ -19,14 +19,17 @@ type Player struct {
 	Parts              []*resolv.Object
 	ServerMsgs         chan serverMessage
 	Room               *Room
+	Color              string
 }
 
 type serverMessage struct {
-	Type     string  `json:"message_type"`
-	X        float64 `json:"x"`
-	Y        float64 `json:"y"`
-	ID       int     `json:"resource_id"`
-	PlayerID string  `json:"player_id"`
+	Type     string            `json:"message_type"`
+	X        float64           `json:"x"`
+	Y        float64           `json:"y"`
+	T        float64           `json:"t"`
+	ID       int               `json:"resource_id"`
+	PlayerID string            `json:"player_id"`
+	Payload  map[string]string `json:"payload"`
 }
 
 type clientMessage struct {
@@ -35,7 +38,11 @@ type clientMessage struct {
 
 var nextPlayerID int = 1
 
-func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
+func CreatePlayer(
+	conn *websocket.Conn,
+	room *Room,
+	color string,
+) *Player {
 	id := fmt.Sprintf("player-%d", nextPlayerID)
 	nextPlayerID++
 
@@ -47,6 +54,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 		Active:     true,
 		ServerMsgs: netOutMessages,
 		Room:       room,
+		Color:      color,
 	}
 
 	conn.SetCloseHandler(newPlayer.CloseHandler)
@@ -72,11 +80,20 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 				case PhyMsgAddPoint:
 					newPlayer.Points++
 					if newPlayer.Points%3 == 0 {
-						conn.WriteJSON(serverMessage{
-							Type:     "add_part",
-							PlayerID: newPlayer.ID,
-						})
 						roomLog.Info("send add part")
+						go func() {
+							for playerID, otherPlayer := range room.Players {
+								select {
+								case otherPlayer.ServerMsgs <- serverMessage{
+									Type:     "add_part",
+									PlayerID: newPlayer.ID,
+								}:
+								case <-time.After(time.Second):
+									logrus.WithField("player_id", playerID).Warn("send of part update timeout")
+								}
+							}
+						}()
+
 						go func() {
 							phym.addPart <- playerPhysicsAddPartRequest{ID: newPlayer.ID}
 						}()
@@ -103,6 +120,13 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 					conn.WriteJSON(serverMessage{
 						Type: "game_over",
 					})
+					go func() {
+						select {
+						case phym.removePlayer <- newPlayer.ID:
+						case <-time.After(time.Second):
+							logrus.Warn("Player removal from pysics module timed out")
+						}
+					}()
 					logrus.Info("send game over")
 
 				case PhyMsgPos:
@@ -111,6 +135,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 						X:        physMsg.X,
 						Y:        physMsg.Y,
 						PlayerID: physMsg.PlayerID,
+						T:        physMsg.T,
 					})
 					logrus.Debug("send game over")
 				}
@@ -124,7 +149,7 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 	clientMsg := &clientMessage{}
 	errCount := 0
 	go func() {
-		for {
+		for newPlayer.Active {
 			if err := conn.ReadJSON(clientMsg); err != nil {
 				errCount++
 				if errCount > 10 {
@@ -145,25 +170,48 @@ func CreatePlayer(conn *websocket.Conn, room *Room) *Player {
 		PlayerID: newPlayer.ID,
 	}
 
+	for _, otherPlayer := range room.Players {
+		// notify all other players about new player
+		otherPlayer.ServerMsgs <- serverMessage{
+			Type:     "new_player",
+			PlayerID: newPlayer.ID,
+			Payload: map[string]string{
+				"color": newPlayer.Color,
+			},
+		}
+
+		// sync existing player to new player
+		newPlayer.ServerMsgs <- serverMessage{
+			Type:     "new_player",
+			PlayerID: otherPlayer.ID,
+			Payload: map[string]string{
+				"color": otherPlayer.Color,
+			},
+		}
+	}
+
 	return newPlayer
 }
 
 func (p *Player) CloseHandler(code int, text string) error {
-	select {
-	case p.Room.PhysicsManager.removePlayer <- p.ID:
-	case <-time.After(time.Second):
-		logrus.Fatal("Player removal from pysics module timed out")
-	}
-
-	p.Active = false
-
 	if p.Room == nil {
 		logrus.Fatal("player closed without room")
 		return fmt.Errorf("player closed without room")
 	}
 
-	p.Room.RoomManager.SendRemovePlayerRequest(p.Room.RoomID, p.ID)
-	p.Room.PhysicsManager.removePlayer <- p.ID
+	go func() {
+		select {
+		case p.Room.PhysicsManager.removePlayer <- p.ID:
+		case <-time.After(time.Second):
+			logrus.Warn("Player removal from pysics module timed out")
+		}
+	}()
+
+	p.Active = false
+
+	go func() {
+		p.Room.RoomManager.SendRemovePlayerRequest(p.Room.RoomID, p.ID)
+	}()
 
 	logrus.WithField("player_id", p.ID).Info("removed from room")
 	return nil

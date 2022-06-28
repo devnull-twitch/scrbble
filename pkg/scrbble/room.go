@@ -55,7 +55,7 @@ func CreateManager() *RoomManager {
 func (m *RoomManager) Start() {
 	roomStorage := make(map[string]*Room)
 
-	cleanupTicket := time.NewTicker(time.Second * 2)
+	cleanupTicket := time.NewTicker(time.Second * 30)
 	for {
 		select {
 		case newRoom := <-m.addRoomChan:
